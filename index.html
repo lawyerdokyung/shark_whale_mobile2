@@ -391,6 +391,8 @@ class Player {
 
   useSpecial(){
     if(this.specialGauge < 1) return; // 게이지 1개 이상 필요
+    // 오색별 충전 있으면 최우선으로 사용!
+    const hasRainbow = (this.rainbowStarCharges||0) > 0;
     const isSuper = this.specialGauge >= 3; // 게이지 3개면 슈퍼 필살기
     const gaugeUsed = isSuper ? 3 : 1;
     this.specialGauge -= gaugeUsed;
@@ -398,6 +400,34 @@ class Player {
     this.specialTimer = 90;
     const dir = this.facingRight ? 1 : -1;
     const bx = this.x + dir*(this.w/2+5);
+
+    // ★★★ 오색찬란 슈퍼필살기 ★★★
+    if(hasRainbow){
+      this.rainbowStarCharges--;
+      const RAINBOW_COLORS = ['#ff2222','#ff8800','#ffee00','#44ff44','#2288ff','#4400ff','#aa00ff','#00eeff','#ffffff'];
+      const count = 100; // 일반의 2배!
+      for(let i=0;i<count;i++){
+        const ang = (i/count)*Math.PI*2;
+        const spd = 4 + Math.random()*8;
+        const col = RAINBOW_COLORS[i % RAINBOW_COLORS.length];
+        this.bullets.push({
+          x:this.x, y:this.y,
+          vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd,
+          dmg:this.atk*6, // 일반 슈퍼의 2배 데미지
+          r:10+Math.random()*6,
+          color:col, shape:'rainbow_super',
+          life:200, isSuper:true, superColor:col,
+          rot:0, rotSpd:0.15+Math.random()*0.1,
+          colorIdx:i % RAINBOW_COLORS.length,
+          flashT:Math.random()*100,
+        });
+      }
+      sfx('boss');
+      this.addParticles(this.x,this.y,'#ffff00',50);
+      this.addParticles(this.x,this.y,'#ff00ff',30);
+      this.addParticles(this.x,this.y,'#00ffff',30);
+      return;
+    }
 
     if(isSuper){
       // ★ 슈퍼 필살기: 캐릭터마다 완전히 다른 슈퍼 필살기!
@@ -504,9 +534,19 @@ class Player {
           this.addParticles(this.x,this.y,'#aaeeff',50);
           this.addParticles(this.x,this.y,'#ffffff',30);
         } else if(id==='blue'){
-          // 대왕고래: 초신성 — 거대 폭탄 1개 + 폭발시 60개 파편
-          this.bullets.push({x:this.x,y:this.y,vx:dir*4,vy:0,dmg:this.atk*8,r:50,color:'#4466ff',shape:'nova',life:100,isSuper:true,superColor:'#4466ff',bomb:true,nova:true});
+          // 대왕고래: 초신성 — 화면 3분의 1 크기 폭탄, 화면 끝까지 날아감!
+          const novaR = Math.min(W,H) * 0.18; // 화면 크기의 약 1/3
+          this.bullets.push({
+            x:this.x, y:this.y,
+            vx:dir*7, vy:0,   // 더 빠르게
+            dmg:this.atk*10, r:novaR,
+            color:'#4466ff', shape:'nova',
+            life:Math.floor(W/7)+30, // 화면 끝까지 갈 수 있도록 life 충분히
+            isSuper:true, superColor:'#4466ff',
+            bomb:true, nova:true, flashT:0
+          });
           this.addParticles(this.x,this.y,'#4466ff',60);
+          this.addParticles(this.x,this.y,'#aaccff',40);
           this.addParticles(this.x,this.y,'#ffffff',20);
         } else if(id==='dolphin'){
           // 돌고래: 소닉붐 — 앞뒤로 동시에 연속 음파 파동 6겹
@@ -844,15 +884,86 @@ class Player {
         ctx.fillStyle='#ffffff88'; ctx.beginPath();
         ctx.moveTo(b.x,b.y-b.r*0.4);ctx.lineTo(b.x+b.r*0.4,b.y);ctx.lineTo(b.x,b.y+b.r*0.4);ctx.lineTo(b.x-b.r*0.4,b.y);ctx.closePath();ctx.fill();
       } else if(b.shape==='nova'){
-        // 대왕고래 슈퍼: 초신성 폭탄
-        b.pulse=(b.pulse||0)+0.12;
-        const sz=b.r+Math.sin(b.pulse)*8;
-        ctx.shadowBlur=30; ctx.shadowColor='#4466ff';
+        // 대왕고래 슈퍼: 화면 3분의 1 크기 초신성 폭탄 — 반짝반짝 빛나며 화면 끝까지!
+        b.pulse=(b.pulse||0)+0.15;
+        b.flashT=(b.flashT||0)+1;
+        const sz=b.r+Math.sin(b.pulse)*18; // 크게 맥동
+
+        // 외곽 빛 방출 (여러 겹)
+        for(let layer=3;layer>=1;layer--){
+          const layerSz = sz*(1+layer*0.35);
+          const alpha = 0.08*(4-layer)*Math.max(0, Math.sin(b.pulse+layer));
+          ctx.fillStyle=`rgba(100,150,255,${alpha})`;
+          ctx.beginPath(); ctx.arc(b.x,b.y,layerSz,0,Math.PI*2); ctx.fill();
+        }
+
+        // 빛줄기 방출 (8방향)
+        ctx.save();
+        ctx.translate(b.x,b.y);
+        ctx.rotate(b.flashT*0.04);
+        for(let ray=0;ray<8;ray++){
+          const rAng = ray/8*Math.PI*2;
+          const rLen = sz*(1.8+Math.sin(b.pulse*1.5+ray)*0.5);
+          const rAlpha = 0.3+Math.sin(b.flashT*0.1+ray)*0.15;
+          ctx.strokeStyle=`rgba(180,210,255,${rAlpha})`;
+          ctx.lineWidth=4-ray%2*2;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(rAng)*sz*0.5, Math.sin(rAng)*sz*0.5);
+          ctx.lineTo(Math.cos(rAng)*rLen, Math.sin(rAng)*rLen);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // 메인 폭탄 (라디알 그라디언트)
+        ctx.shadowBlur=50+Math.sin(b.pulse)*20; ctx.shadowColor='#6699ff';
         const grad2=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,sz);
-        grad2.addColorStop(0,'#ffffff');grad2.addColorStop(0.3,'#aaccff');grad2.addColorStop(0.7,'#4466ff');grad2.addColorStop(1,'#000033');
+        grad2.addColorStop(0,'#ffffff');
+        grad2.addColorStop(0.15,'#e0ecff');
+        grad2.addColorStop(0.4,'#88aaff');
+        grad2.addColorStop(0.7,'#2244cc');
+        grad2.addColorStop(0.9,'#001166');
+        grad2.addColorStop(1,'rgba(0,0,30,0)');
         ctx.fillStyle=grad2; ctx.beginPath(); ctx.arc(b.x,b.y,sz,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#ffffff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(b.x,b.y,sz,0,Math.PI*2); ctx.stroke();
-      } else if(b.shape==='sonic_ring'){
+
+        // 반짝이는 외곽선 (색 변환)
+        const hueShift = (b.flashT*3)%360;
+        ctx.strokeStyle=`hsl(${hueShift},100%,80%)`; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(b.x,b.y,sz*0.95,0,Math.PI*2); ctx.stroke();
+        ctx.strokeStyle=`hsl(${(hueShift+120)%360},100%,70%)`; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.arc(b.x,b.y,sz*1.08,0,Math.PI*2); ctx.stroke();
+
+        ctx.shadowBlur=0;
+      } else if(b.shape==='nova_shrapnel'){
+        // 대왕고래 핵폭탄 파편 — 빛나는 삼각형/마름모꼴
+        b.flashT=(b.flashT||0)+1;
+        b.rot=(b.rot||0)+(b.rotSpd||0.2);
+        const alpha = Math.min(1, b.life/20);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(b.x,b.y);
+        ctx.rotate(b.rot);
+        ctx.shadowBlur=18; ctx.shadowColor=b.color;
+        const sg=ctx.createRadialGradient(0,0,0,0,0,b.r);
+        sg.addColorStop(0,'#ffffff');
+        sg.addColorStop(0.5,b.color);
+        sg.addColorStop(1,b.color+'44');
+        ctx.fillStyle=sg;
+        // 마름모꼴 파편
+        ctx.beginPath();
+        ctx.moveTo(0,-b.r);
+        ctx.lineTo(b.r*0.55,0);
+        ctx.lineTo(0,b.r*0.7);
+        ctx.lineTo(-b.r*0.55,0);
+        ctx.closePath();
+        ctx.fill();
+        // 꼬리 빛
+        ctx.strokeStyle=b.color+'88'; ctx.lineWidth=2;
+        ctx.beginPath();
+        ctx.moveTo(0,b.r*0.7);
+        ctx.lineTo(0,b.r*1.8);
+        ctx.stroke();
+        ctx.shadowBlur=0;
+        ctx.restore();
         // 돌고래 슈퍼: 소닉 링파
         ctx.shadowBlur=15; ctx.shadowColor=b.color;
         ctx.strokeStyle=b.color; ctx.lineWidth=4;
@@ -862,6 +973,48 @@ class Player {
       } else if(b.shape==='spark'){
         // 파티클 불꽃
         ctx.fillStyle=b.color; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+      } else if(b.shape==='rainbow_super'){
+        // 오색찬란 슈퍼 필살기: 무지개 색 회전 별
+        b.flashT=(b.flashT||0)+1;
+        b.rot=(b.rot||0)+(b.rotSpd||0.15);
+        const RCOLS=['#ff2222','#ff8800','#ffee00','#44ff44','#2288ff','#4400ff','#aa00ff','#00eeff','#ffffff'];
+        // 색상을 시간에 따라 순환
+        const rcol = RCOLS[Math.floor((b.colorIdx + Math.floor(b.flashT*0.15)) % RCOLS.length)];
+        const rcol2 = RCOLS[(Math.floor(b.colorIdx + Math.floor(b.flashT*0.15)) + 3) % RCOLS.length];
+        const rpulse = Math.sin(b.flashT*0.2)*2;
+
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.rot);
+
+        // 외곽 글로우
+        ctx.shadowBlur = 20+Math.sin(b.flashT*0.15)*8;
+        ctx.shadowColor = rcol;
+
+        // 별 모양 (5각별)
+        const starGrad = ctx.createRadialGradient(0,0,0,0,0,b.r+rpulse);
+        starGrad.addColorStop(0,'#ffffff');
+        starGrad.addColorStop(0.35, rcol2);
+        starGrad.addColorStop(1, rcol);
+        ctx.fillStyle = starGrad;
+        ctx.beginPath();
+        for(let s=0;s<5;s++){
+          const outerA=(s/5)*Math.PI*2-Math.PI/2;
+          const innerA=outerA+Math.PI/5;
+          if(s===0) ctx.moveTo(Math.cos(outerA)*(b.r+rpulse),Math.sin(outerA)*(b.r+rpulse));
+          else ctx.lineTo(Math.cos(outerA)*(b.r+rpulse),Math.sin(outerA)*(b.r+rpulse));
+          ctx.lineTo(Math.cos(innerA)*(b.r*0.4),Math.sin(innerA)*(b.r*0.4));
+        }
+        ctx.closePath(); ctx.fill();
+
+        // 반짝임 (작은 흰 원)
+        if(Math.floor(b.flashT*0.3)%2===0){
+          ctx.fillStyle='rgba(255,255,255,0.8)';
+          ctx.beginPath(); ctx.arc(0,-(b.r+rpulse)*0.6, 2.5, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.shadowBlur=0;
+        ctx.restore();
+
       } else if(b.shape==='super'){
         // 기존 슈퍼 (fallback)
         const pulse=Math.sin(frame*0.3+b.life*0.1)*2;
@@ -2383,8 +2536,9 @@ const ITEM_TYPES = [
   { id:'doubleshot', label:'🔥', color:'#ff6600', desc:'2연사 8초',        r:16 },
   { id:'bomb',       label:'💣', color:'#8844ff', desc:'화면 폭탄!',       r:18 },
   { id:'score',      label:'💰', color:'#ffff00', desc:'점수 +500',        r:14 },
+  { id:'rainbow_star',label:'🌟', color:'#ffffff', desc:'오색 슈퍼필살기 10회!', r:22 },
 ];
-const ITEM_WEIGHTS = [20, 30, 8, 15, 12, 6, 30]; // 출현 확률 가중치
+const ITEM_WEIGHTS = [20, 30, 8, 15, 12, 6, 30, 4]; // 출현 확률 가중치 (오색별 희귀)
 
 function spawnItem(x, y){
   let total = ITEM_WEIGHTS.reduce((a,b)=>a+b,0);
@@ -2426,6 +2580,10 @@ function applyItem(item, player){
   } else if(item.id==='score'){
     score += 500;
     showItemMsg('💰 +500점!', player);
+  } else if(item.id==='rainbow_star'){
+    player.rainbowStarCharges = (player.rainbowStarCharges||0) + 10;
+    showItemMsg('🌟 오색 슈퍼필살기 10회!', player);
+    sfx('boss');
   }
 }
 
@@ -2654,12 +2812,79 @@ function update(){
         for(const e of enemies){
           if(!e.dead && Math.abs(b.x-e.x)<e.w/2+b.r && Math.abs(b.y-e.y)<e.h/2+b.r){
             const wasDead = e.dead;
+
+            // ━━━ 대왕고래 nova: 핵폭탄 연쇄폭발! ━━━
+            if(b.shape==='nova' && !b.exploded){
+              b.exploded = true;
+              b.life = 0;
+              // 폭발 이펙트
+              pl.addParticles(b.x,b.y,'#ffffff',60);
+              pl.addParticles(b.x,b.y,'#aaccff',40);
+              pl.addParticles(b.x,b.y,'#4466ff',30);
+              sfx('boss');
+              // 파편 30개 사방으로 퍼짐 — 각 파편도 강력!
+              for(let f=0;f<30;f++){
+                const fAng = (f/30)*Math.PI*2;
+                const fSpd = 6 + Math.random()*10;
+                const fColors = ['#ffffff','#aaccff','#4466ff','#88aaff','#00ccff','#ff8800','#ffff00'];
+                pl.bullets.push({
+                  x: b.x, y: b.y,
+                  vx: Math.cos(fAng)*fSpd,
+                  vy: Math.sin(fAng)*fSpd,
+                  dmg: pl.atk*8,        // 파편도 강력!
+                  r: 12 + Math.random()*8,
+                  color: fColors[f%fColors.length],
+                  shape: 'nova_shrapnel',
+                  life: 80 + Math.random()*40,
+                  isSuper: true,
+                  superColor: '#aaccff',
+                  rot: Math.random()*Math.PI*2,
+                  rotSpd: (Math.random()-0.5)*0.3,
+                  flashT: 0,
+                });
+              }
+              // nova 범위 내 모든 적 즉사!
+              enemies.forEach(ne=>{
+                if(!ne.dead && Math.hypot(b.x-ne.x,b.y-ne.y)<b.r*1.5){
+                  ne.takeDamage(9999);
+                  pl.addParticles(ne.x,ne.y,'#ff8800',10);
+                }
+              });
+              if(boss) boss.takeDamage(b.dmg);
+              break;
+            }
+
             e.takeDamage(b.dmg*(pl.specialActive?2:1), {freeze:b.freeze,poison:b.poison});
             // 적 처치 시 게이지 증가 (50% 확률)
             if(!wasDead && e.dead && Math.random()<0.5){
               pl.addGauge(1);
             }
             b.life=0;
+          }
+        }
+        // nova가 보스에 닿아도 폭발
+        if(b.shape==='nova' && !b.exploded && boss && !boss.dead){
+          if(Math.abs(b.x-boss.x)<boss.w/2+b.r && Math.abs(b.y-boss.y)<boss.h/2+b.r){
+            b.exploded=true; b.life=0;
+            pl.addParticles(b.x,b.y,'#ffffff',60);
+            pl.addParticles(b.x,b.y,'#4466ff',40);
+            sfx('boss');
+            for(let f=0;f<30;f++){
+              const fAng=(f/30)*Math.PI*2;
+              const fSpd=6+Math.random()*10;
+              const fColors=['#ffffff','#aaccff','#4466ff','#88aaff','#00ccff','#ff8800','#ffff00'];
+              pl.bullets.push({
+                x:b.x,y:b.y,
+                vx:Math.cos(fAng)*fSpd,vy:Math.sin(fAng)*fSpd,
+                dmg:pl.atk*8,r:12+Math.random()*8,
+                color:fColors[f%fColors.length],
+                shape:'nova_shrapnel',
+                life:80+Math.random()*40,
+                isSuper:true,superColor:'#aaccff',
+                rot:Math.random()*Math.PI*2,rotSpd:(Math.random()-0.5)*0.3,flashT:0,
+              });
+            }
+            boss.takeDamage(b.dmg);
           }
         }
       }
@@ -3118,14 +3343,68 @@ function drawGame(){
     const pulse = Math.sin(item.flashT*0.1)*3;
     const lifeAlpha = item.life < 120 ? item.life/120 : 1;
     ctx.globalAlpha = lifeAlpha;
-    // 빛나는 배경 원
-    ctx.shadowBlur=18; ctx.shadowColor=item.color;
-    ctx.fillStyle=item.color+'33';
-    ctx.beginPath(); ctx.arc(item.x,item.y,item.r+pulse+6,0,Math.PI*2); ctx.fill();
-    // 메인 원
-    ctx.fillStyle=item.color;
-    ctx.beginPath(); ctx.arc(item.x,item.y,item.r+pulse,0,Math.PI*2); ctx.fill();
-    ctx.shadowBlur=0;
+
+    if(item.id==='rainbow_star'){
+      // 오색찬란 별 아이템 — 화려하게 색이 바뀌며 반짝반짝
+      const hue = (item.flashT * 4) % 360;
+      const rainbowColor = `hsl(${hue},100%,60%)`;
+      const rainbowColor2 = `hsl(${(hue+60)%360},100%,70%)`;
+      const sz = item.r + pulse + 4;
+
+      // 배경 글로우 (색 변환)
+      ctx.shadowBlur = 28 + Math.sin(item.flashT*0.15)*10;
+      ctx.shadowColor = rainbowColor;
+
+      // 회전하는 링들
+      for(let ri=0;ri<3;ri++){
+        ctx.strokeStyle = `hsl(${(hue+ri*60)%360},100%,65%)`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, sz+ri*6, item.flashT*0.06*(ri+1), item.flashT*0.06*(ri+1)+Math.PI*1.5);
+        ctx.stroke();
+      }
+
+      // 별 모양 그리기 (5각별, 회전)
+      ctx.save();
+      ctx.translate(item.x, item.y);
+      ctx.rotate(item.flashT * 0.05);
+      const starGrad = ctx.createRadialGradient(0,0,0,0,0,sz);
+      starGrad.addColorStop(0,'#ffffff');
+      starGrad.addColorStop(0.4, rainbowColor2);
+      starGrad.addColorStop(1, rainbowColor);
+      ctx.fillStyle = starGrad;
+      ctx.beginPath();
+      for(let s=0;s<5;s++){
+        const outerA = (s/5)*Math.PI*2 - Math.PI/2;
+        const innerA = outerA + Math.PI/5;
+        if(s===0) ctx.moveTo(Math.cos(outerA)*sz, Math.sin(outerA)*sz);
+        else ctx.lineTo(Math.cos(outerA)*sz, Math.sin(outerA)*sz);
+        ctx.lineTo(Math.cos(innerA)*sz*0.42, Math.sin(innerA)*sz*0.42);
+      }
+      ctx.closePath(); ctx.fill();
+
+      // 반짝임 파티클 효과 (흰 작은 별 4개 회전)
+      for(let sp=0;sp<4;sp++){
+        const sa = item.flashT*0.08 + sp*Math.PI/2;
+        const sd = sz + 8;
+        ctx.fillStyle = `hsl(${(hue+sp*90)%360},100%,80%)`;
+        ctx.beginPath();
+        ctx.arc(Math.cos(sa)*sd, Math.sin(sa)*sd, 3+Math.sin(item.flashT*0.2+sp)*1.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.shadowBlur=0;
+
+    } else {
+      // 일반 아이템
+      ctx.shadowBlur=18; ctx.shadowColor=item.color;
+      ctx.fillStyle=item.color+'33';
+      ctx.beginPath(); ctx.arc(item.x,item.y,item.r+pulse+6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle=item.color;
+      ctx.beginPath(); ctx.arc(item.x,item.y,item.r+pulse,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+    }
+
     // 아이콘
     ctx.font=`${item.r+4}px serif`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -3258,6 +3537,17 @@ function drawHUD(){
   } else {
     ctx.fillStyle='#446688';
     ctx.fillText('게이지 충전중', 160, 34);
+  }
+
+  // 오색별 충전 표시
+  if((player1.rainbowStarCharges||0) > 0){
+    const rhue = (frame*5)%360;
+    ctx.shadowBlur=10; ctx.shadowColor=`hsl(${rhue},100%,65%)`;
+    ctx.fillStyle=`hsl(${rhue},100%,70%)`;
+    ctx.font=`bold ${Math.min(W/45,14)}px monospace`;
+    ctx.textAlign='left';
+    ctx.fillText(`🌟 오색필살기 ×${player1.rainbowStarCharges}`, 8, 56);
+    ctx.shadowBlur=0;
   }
 
   // SCORE
@@ -3531,10 +3821,18 @@ c.addEventListener('click', function(e){
     jp.style.display=(typeof gameState!=='undefined'&&gameState==='PLAYING')?'flex':'none';
     var bs=document.getElementById('bspec');
     if(bs&&player1){
+      var rc=player1.rainbowStarCharges||0;
       var g=player1.specialGauge||0;
-      if(g>=3){bs.className='jb sup';bs.innerHTML='★<br>슈퍼!';}
-      else if(g>=1){bs.className='jb rdy';bs.innerHTML='⚡<br>필살기';}
-      else{bs.className='jb';bs.innerHTML='⚡<br>'+g+'/3';}
+      if(rc>0){
+        // 오색별 필살기 우선 표시 — 색상 변환
+        var h2=(Date.now()/10)%360;
+        bs.style.background='hsl('+h2+',100%,45%)';
+        bs.style.boxShadow='0 0 18px hsl('+h2+',100%,60%)';
+        bs.className='jb';
+        bs.innerHTML='🌟<br>×'+rc;
+      } else if(g>=3){bs.className='jb sup';bs.style.background='';bs.style.boxShadow='';bs.innerHTML='★<br>슈퍼!';}
+      else if(g>=1){bs.className='jb rdy';bs.style.background='';bs.style.boxShadow='';bs.innerHTML='⚡<br>필살기';}
+      else{bs.className='jb';bs.style.background='';bs.style.boxShadow='';bs.innerHTML='⚡<br>'+g+'/3';}
     }
   },100);
 })();
